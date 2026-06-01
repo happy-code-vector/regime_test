@@ -57,6 +57,6 @@ ipython_config.py
 Thumbs.db
 
 # Project
-trained_output/
+trained_output*/
 .claude/
 *.csv
