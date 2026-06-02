@@ -43,17 +43,18 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         params = {
             "objective": "multi:softprob",
             "num_class": num_class,
-            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
-            "max_depth": trial.suggest_int("max_depth", 3, 10),
-            "learning_rate": trial.suggest_float("lr", 0.01, 0.3, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
+            "max_depth": trial.suggest_int("max_depth", 4, 10),
+            "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
             "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
-            "min_child_weight": trial.suggest_int("min_child", 1, 10),
-            "reg_alpha": trial.suggest_float("alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("lambda", 1e-8, 10.0, log=True),
+            "min_child_weight": trial.suggest_int("min_child", 2, 10),
+            "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
             "eval_metric": "mlogloss",
             "early_stopping_rounds": 25,
             "verbosity": 0,
+            "n_jobs": -1,
         }
         model = xgb.XGBClassifier(**params)
         fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
@@ -80,21 +81,25 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
     # ── LightGBM study (9 dimensions, num_leaves constrained by max_depth) ──
     print("\n  [Optuna] Tuning LightGBM...")
     def lgbm_objective(trial):
-        max_depth = trial.suggest_int("max_depth", 3, 12)
-        max_leaves = max(20, min(300, 2 ** max_depth))  # num_leaves can't exceed 2^max_depth
+        max_depth = trial.suggest_int("max_depth", 4, 12)
+        max_leaves = max(31, min(255, 2 ** max_depth))  # num_leaves can't exceed 2^max_depth
         params = {
             "objective": "multiclass",
             "num_class": num_class,
-            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
+            "metric": "multi_logloss",
+            "boosting_type": "gbdt",
+            "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
             "max_depth": max_depth,
-            "learning_rate": trial.suggest_float("lr", 0.01, 0.3, log=True),
+            "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
             "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
-            "num_leaves": trial.suggest_int("num_leaves", 20, max_leaves),
-            "min_child_samples": trial.suggest_int("min_child", 5, 100),
-            "reg_alpha": trial.suggest_float("alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("lambda", 1e-8, 10.0, log=True),
+            "num_leaves": trial.suggest_int("num_leaves", 31, max_leaves),
+            "min_child_samples": trial.suggest_int("min_child", 10, 100),
+            "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 0.5),
+            "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
             "verbose": -1,
+            "n_jobs": -1,
         }
         model = lgbm.LGBMClassifier(**params)
         fit_kw = {"eval_set": [(X_val.values, y_val.values)],
@@ -115,6 +120,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         "colsample_bytree": lgbm_study.best_trial.params["colsample"],
         "num_leaves": lgbm_study.best_trial.params["num_leaves"],
         "min_child_samples": lgbm_study.best_trial.params["min_child"],
+        "min_split_gain": lgbm_study.best_trial.params["min_split_gain"],
         "reg_alpha": lgbm_study.best_trial.params["alpha"],
         "reg_lambda": lgbm_study.best_trial.params["lambda"],
     }
