@@ -26,95 +26,128 @@ import joblib
 # ──────────────────────────────────────────────────────────────
 
 def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
-                     sample_weight=None, n_trials=50):
+                     sample_weight=None, n_trials=100):
     """Run Optuna to find best XGBoost + LightGBM hyperparameters.
 
+    Uses separate studies per model (8D + 9D instead of 17D joint),
+    multivariate TPE sampler, and early stopping on both models.
     Returns (best_xgb_params, best_lgbm_params) dicts.
     """
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    sampler = optuna.samplers.TPESampler(multivariate=True, seed=42)
 
-    def objective(trial):
-        # ── XGBoost params ──
-        xgb_params = {
+    # ── XGBoost study (8 dimensions) ──
+    print("\n  [Optuna] Tuning XGBoost...")
+    def xgb_objective(trial):
+        params = {
             "objective": "multi:softprob",
             "num_class": num_class,
-            "n_estimators": trial.suggest_int("xgb_n_estimators", 100, 1000),
-            "max_depth": trial.suggest_int("xgb_max_depth", 3, 10),
-            "learning_rate": trial.suggest_float("xgb_lr", 0.01, 0.3, log=True),
-            "subsample": trial.suggest_float("xgb_subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("xgb_colsample", 0.5, 1.0),
-            "min_child_weight": trial.suggest_int("xgb_min_child", 1, 10),
-            "reg_alpha": trial.suggest_float("xgb_alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("xgb_lambda", 1e-8, 10.0, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("lr", 0.01, 0.3, log=True),
+            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
+            "min_child_weight": trial.suggest_int("min_child", 1, 10),
+            "reg_alpha": trial.suggest_float("alpha", 1e-8, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("lambda", 1e-8, 10.0, log=True),
             "eval_metric": "mlogloss",
             "early_stopping_rounds": 25,
             "verbosity": 0,
         }
-
-        xgb_model = xgb.XGBClassifier(**xgb_params)
+        model = xgb.XGBClassifier(**params)
         fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
         if sample_weight is not None:
             fit_kw["sample_weight"] = sample_weight
-        xgb_model.fit(X_train.values, y_train.values, **fit_kw)
+        model.fit(X_train.values, y_train.values, **fit_kw)
+        return accuracy_score(y_val.values, model.predict(X_val.values))
 
-        # ── LightGBM params ──
-        lgbm_params = {
+    xgb_study = optuna.create_study(direction="maximize", sampler=sampler)
+    xgb_study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=True)
+
+    xgb_best = {
+        "n_estimators": xgb_study.best_trial.params["n_estimators"],
+        "max_depth": xgb_study.best_trial.params["max_depth"],
+        "learning_rate": xgb_study.best_trial.params["lr"],
+        "subsample": xgb_study.best_trial.params["subsample"],
+        "colsample_bytree": xgb_study.best_trial.params["colsample"],
+        "min_child_weight": xgb_study.best_trial.params["min_child"],
+        "reg_alpha": xgb_study.best_trial.params["alpha"],
+        "reg_lambda": xgb_study.best_trial.params["lambda"],
+    }
+    print(f"  [Optuna] Best XGBoost val accuracy: {xgb_study.best_value:.4f}")
+
+    # ── LightGBM study (9 dimensions, num_leaves constrained by max_depth) ──
+    print("\n  [Optuna] Tuning LightGBM...")
+    def lgbm_objective(trial):
+        max_depth = trial.suggest_int("max_depth", 3, 12)
+        max_leaves = min(300, 2 ** max_depth)  # num_leaves can't exceed 2^max_depth
+        params = {
             "objective": "multiclass",
             "num_class": num_class,
-            "n_estimators": trial.suggest_int("lgbm_n_estimators", 100, 1000),
-            "max_depth": trial.suggest_int("lgbm_max_depth", 3, 12),
-            "learning_rate": trial.suggest_float("lgbm_lr", 0.01, 0.3, log=True),
-            "subsample": trial.suggest_float("lgbm_subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("lgbm_colsample", 0.5, 1.0),
-            "num_leaves": trial.suggest_int("lgbm_num_leaves", 20, 300),
-            "min_child_samples": trial.suggest_int("lgbm_min_child", 5, 100),
-            "reg_alpha": trial.suggest_float("lgbm_alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("lgbm_lambda", 1e-8, 10.0, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
+            "max_depth": max_depth,
+            "learning_rate": trial.suggest_float("lr", 0.01, 0.3, log=True),
+            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
+            "num_leaves": trial.suggest_int("num_leaves", 20, max_leaves),
+            "min_child_samples": trial.suggest_int("min_child", 5, 100),
+            "reg_alpha": trial.suggest_float("alpha", 1e-8, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("lambda", 1e-8, 10.0, log=True),
             "verbose": -1,
         }
-
-        lgbm_model = lgbm.LGBMClassifier(**lgbm_params)
-        lgbm_kw = {"eval_set": [(X_val.values, y_val.values)]}
+        model = lgbm.LGBMClassifier(**params)
+        fit_kw = {"eval_set": [(X_val.values, y_val.values)],
+                  "callbacks": [lgbm.early_stopping(25, verbose=False)]}
         if sample_weight is not None:
-            lgbm_kw["sample_weight"] = sample_weight
-        lgbm_model.fit(X_train.values, y_train.values, **lgbm_kw)
+            fit_kw["sample_weight"] = sample_weight
+        model.fit(X_train.values, y_train.values, **fit_kw)
+        return accuracy_score(y_val.values, model.predict(X_val.values))
 
-        # Ensemble accuracy on validation set
-        proba_xgb = xgb_model.predict_proba(X_val.values)
-        proba_lgbm = lgbm_model.predict_proba(X_val.values)
-        pred = ((proba_xgb + proba_lgbm) / 2).argmax(axis=1)
-        return accuracy_score(y_val.values, pred)
+    lgbm_study = optuna.create_study(direction="maximize", sampler=sampler)
+    lgbm_study.optimize(lgbm_objective, n_trials=n_trials, show_progress_bar=True)
 
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-
-    best = study.best_trial.params
-
-    # Split params back into xgb and lgbm dicts
-    xgb_best = {
-        "n_estimators": best["xgb_n_estimators"],
-        "max_depth": best["xgb_max_depth"],
-        "learning_rate": best["xgb_lr"],
-        "subsample": best["xgb_subsample"],
-        "colsample_bytree": best["xgb_colsample"],
-        "min_child_weight": best["xgb_min_child"],
-        "reg_alpha": best["xgb_alpha"],
-        "reg_lambda": best["xgb_lambda"],
-    }
     lgbm_best = {
-        "n_estimators": best["lgbm_n_estimators"],
-        "max_depth": best["lgbm_max_depth"],
-        "learning_rate": best["lgbm_lr"],
-        "subsample": best["lgbm_subsample"],
-        "colsample_bytree": best["lgbm_colsample"],
-        "num_leaves": best["lgbm_num_leaves"],
-        "min_child_samples": best["lgbm_min_child"],
-        "reg_alpha": best["lgbm_alpha"],
-        "reg_lambda": best["lgbm_lambda"],
+        "n_estimators": lgbm_study.best_trial.params["n_estimators"],
+        "max_depth": lgbm_study.best_trial.params["max_depth"],
+        "learning_rate": lgbm_study.best_trial.params["lr"],
+        "subsample": lgbm_study.best_trial.params["subsample"],
+        "colsample_bytree": lgbm_study.best_trial.params["colsample"],
+        "num_leaves": lgbm_study.best_trial.params["num_leaves"],
+        "min_child_samples": lgbm_study.best_trial.params["min_child"],
+        "reg_alpha": lgbm_study.best_trial.params["alpha"],
+        "reg_lambda": lgbm_study.best_trial.params["lambda"],
     }
+    print(f"  [Optuna] Best LightGBM val accuracy: {lgbm_study.best_value:.4f}")
 
-    print(f"\n  Best trial val accuracy: {study.best_value:.4f}")
+    # ── Final ensemble eval with best params ──
+    print("\n  [Optuna] Evaluating best ensemble...")
+    xgb_model = xgb.XGBClassifier(
+        objective="multi:softprob", num_class=num_class,
+        eval_metric="mlogloss", early_stopping_rounds=25, verbosity=0,
+        **xgb_best,
+    )
+    fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
+    if sample_weight is not None:
+        fit_kw["sample_weight"] = sample_weight
+    xgb_model.fit(X_train.values, y_train.values, **fit_kw)
+
+    lgbm_model = lgbm.LGBMClassifier(
+        objective="multiclass", num_class=num_class, verbose=-1,
+        **lgbm_best,
+    )
+    lgbm_kw = {"eval_set": [(X_val.values, y_val.values)],
+               "callbacks": [lgbm.early_stopping(25, verbose=False)]}
+    if sample_weight is not None:
+        lgbm_kw["sample_weight"] = sample_weight
+    lgbm_model.fit(X_train.values, y_train.values, **lgbm_kw)
+
+    proba_xgb = xgb_model.predict_proba(X_val.values)
+    proba_lgbm = lgbm_model.predict_proba(X_val.values)
+    pred = ((proba_xgb + proba_lgbm) / 2).argmax(axis=1)
+    ensemble_acc = accuracy_score(y_val.values, pred)
+
+    print(f"\n  Best ensemble val accuracy: {ensemble_acc:.4f}")
     print(f"  XGBoost params: {xgb_best}")
     print(f"  LightGBM params: {lgbm_best}")
 
@@ -185,6 +218,7 @@ def train_ensemble(X_train, y_train, X_val=None, y_val=None,
     lgbm_kw = {}
     if X_val is not None:
         lgbm_kw["eval_set"] = [(X_val.values, y_val.values)]
+        lgbm_kw["callbacks"] = [lgbm.early_stopping(25, verbose=False)]
     if sample_weight is not None:
         lgbm_kw["sample_weight"] = sample_weight
     lgbm_model.fit(X_train.values, y_train.values, **lgbm_kw)

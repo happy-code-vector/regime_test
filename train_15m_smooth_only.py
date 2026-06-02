@@ -69,7 +69,7 @@ def run_pipeline(csv_path, output_dir, mode, n_trials, xgb_params, lgbm_params, 
 
 
 def main(csv_path="training_15m.csv", output_dir="trained_output_15m_smooth_only",
-         mode="static", n_trials=50, smooth_window=3):
+         mode="static", n_trials=100, smooth_window=3):
     num_class = len(REGIME_CLASSES)
 
     if mode in ("static", "both"):
