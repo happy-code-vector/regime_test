@@ -60,3 +60,4 @@ Thumbs.db
 trained_output*/
 .claude/
 *.csv
+logs/

@@ -81,7 +81,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
     print("\n  [Optuna] Tuning LightGBM...")
     def lgbm_objective(trial):
         max_depth = trial.suggest_int("max_depth", 3, 12)
-        max_leaves = min(300, 2 ** max_depth)  # num_leaves can't exceed 2^max_depth
+        max_leaves = max(20, min(300, 2 ** max_depth))  # num_leaves can't exceed 2^max_depth
         params = {
             "objective": "multiclass",
             "num_class": num_class,
