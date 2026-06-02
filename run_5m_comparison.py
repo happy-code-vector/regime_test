@@ -140,7 +140,7 @@ def main():
     # Summary table
     w = 90
     summary = f"\n{'=' * w}\nSUMMARY\n{'=' * w}\n\n"
-    summary += f"{'Script':<30} {'Static':>8} {'Optuna':>8} {'Δ Acc':>8} {'Static F1':>10} {'Optuna F1':>10} {'Δ F1':>8} {'Time':>6}\n"
+    summary += f"{'Script':<30} {'Static':>8} {'Optuna':>8} {'D Acc':>8} {'Static F1':>10} {'Optuna F1':>10} {'D F1':>8} {'Time':>6}\n"
     summary += "-" * w + "\n"
 
     for r in results:
