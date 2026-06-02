@@ -100,32 +100,6 @@ def chronological_split(X, y, train_ratio=0.70, val_ratio=0.15):
     return splits
 
 
-def stratify_classes(X, y, min_samples=500, max_ratio=10.0):
-    """Downsample dominant classes and oversample rare classes."""
-    counts = y.value_counts()
-    max_keep = int(counts.max() / max_ratio)
-    target_per_class = max(max_keep, min_samples)
-
-    indices = []
-    for cls in sorted(counts.index):
-        cls_idx = list(y[y == cls].index)
-        n_have = len(cls_idx)
-
-        if n_have >= target_per_class:
-            sampled = np.random.choice(cls_idx, target_per_class, replace=False)
-            indices.extend(sampled)
-        else:
-            indices.extend(cls_idx)
-            extra = np.random.choice(cls_idx, target_per_class - n_have, replace=True)
-            indices.extend(extra)
-
-    np.random.shuffle(indices)
-    print(f"  Stratified: {len(y)} -> {len(indices)} samples (target {target_per_class}/class)")
-    for cls in sorted(counts.index):
-        print(f"    {REGIME_CLASSES[cls]:12s}: {(y.iloc[indices] == cls).sum()}")
-    return X.iloc[indices].reset_index(drop=True), y.iloc[indices].reset_index(drop=True)
-
-
 def train_ensemble(X_train, y_train, X_val=None, y_val=None):
     """Train XGBoost + LightGBM ensemble."""
     num_class = len(REGIME_CLASSES)
