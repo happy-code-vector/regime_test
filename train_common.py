@@ -265,7 +265,7 @@ def evaluate(xgb_model, lgbm_model, X_test, y_test, regime_classes, tag=""):
         row = "  ".join([f"{cm[i,j]:>{col_w}d}" for j in range(len(regime_classes))])
         print(f"  {regime_classes[i]:{col_w}s}: {row}")
 
-    return acc_ens
+    return acc_ens, f1_ens
 
 
 # ──────────────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ def run_pipeline(csv_path, output_dir, mode, n_trials, xgb_params, lgbm_params, 
         X_train, y_train, X_val, y_val,
         num_class=num_class, xgb_params=xgb_params, lgbm_params=lgbm_params,
     )
-    acc = evaluate(xgb_model, lgbm_model, X_test, y_test, REGIME_CLASSES, tag="Test ")
+    acc, f1 = evaluate(xgb_model, lgbm_model, X_test, y_test, REGIME_CLASSES, tag="Test ")
 
     print(f"\n  Retraining on full data for export...")
     xgb_full, lgbm_full = train_ensemble(
@@ -65,7 +65,7 @@ def run_pipeline(csv_path, output_dir, mode, n_trials, xgb_params, lgbm_params, 
     )
     export_models(xgb_full, lgbm_full, feature_names, output_dir, "15m", REGIME_CLASSES,
                   metadata_extra={"approach": "smooth_only", "smooth_window": smooth_window})
-    return acc
+    return acc, f1
 
 
 def main(csv_path="training_15m.csv", output_dir="trained_output_15m_smooth_only",

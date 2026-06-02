@@ -80,14 +80,14 @@ def run_pipeline(csv_path, output_dir, mode, n_trials, xgb_params, lgbm_params):
         X_train, y_train, X_val, y_val,
         num_class=num_class, xgb_params=xgb_params, lgbm_params=lgbm_params,
     )
-    acc = evaluate(xgb_model, lgbm_model, X_test, y_test, REGIME_CLASSES, tag="Test ")
+    acc, f1 = evaluate(xgb_model, lgbm_model, X_test, y_test, REGIME_CLASSES, tag="Test ")
 
     print(f"\n  Retraining on full data for export...")
     xgb_full, lgbm_full = train_ensemble(
         X, y, num_class=num_class, xgb_params=xgb_params, lgbm_params=lgbm_params,
     )
     export_models(xgb_full, lgbm_full, feature_names, output_dir, "5m", REGIME_CLASSES)
-    return acc
+    return acc, f1
 
 
 def main(csv_path="training_5m.csv", output_dir="trained_output_5m_features",
@@ -98,7 +98,7 @@ def main(csv_path="training_5m.csv", output_dir="trained_output_5m_features",
         print("\n" + "=" * 60)
         print("5m Features — STATIC hyperparameters")
         print("=" * 60)
-        acc_static = run_pipeline(csv_path, output_dir, mode, n_trials, STATIC_XGB_PARAMS, STATIC_LGBM_PARAMS)
+        acc_static, f1_static = run_pipeline(csv_path, output_dir, mode, n_trials, STATIC_XGB_PARAMS, STATIC_LGBM_PARAMS)
 
     if mode in ("optuna", "both"):
         print("\n" + "=" * 60)
@@ -110,15 +110,15 @@ def main(csv_path="training_5m.csv", output_dir="trained_output_5m_features",
         print(f"\n  Running Optuna ({n_trials} trials)...")
         xgb_best, lgbm_best = run_optuna_study(X_train, y_train, X_val, y_val, num_class, n_trials=n_trials)
 
-        acc_optuna = run_pipeline(csv_path, output_dir + "_optuna", mode, n_trials, xgb_best, lgbm_best)
+        acc_optuna, f1_optuna = run_pipeline(csv_path, output_dir + "_optuna", mode, n_trials, xgb_best, lgbm_best)
 
     if mode == "both":
         print("\n" + "=" * 60)
         print("COMPARISON: Static vs Optuna")
         print("=" * 60)
-        print(f"  Static  accuracy: {acc_static:.4f}")
-        print(f"  Optuna  accuracy: {acc_optuna:.4f}")
-        print(f"  Delta:            {acc_optuna - acc_static:+.4f}")
+        print(f"  Static  accuracy: {acc_static:.4f}  |  macro-F1: {f1_static:.4f}")
+        print(f"  Optuna  accuracy: {acc_optuna:.4f}  |  macro-F1: {f1_optuna:.4f}")
+        print(f"  Delta   accuracy: {acc_optuna - acc_static:+.4f}  |  macro-F1: {f1_optuna - f1_static:+.4f}")
 
 
 if __name__ == "__main__":
