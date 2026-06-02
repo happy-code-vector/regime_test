@@ -17,7 +17,7 @@ import xgboost as xgb
 import lightgbm as lgbm
 from pathlib import Path
 from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 import joblib
 
 
@@ -60,7 +60,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         if sample_weight is not None:
             fit_kw["sample_weight"] = sample_weight
         model.fit(X_train.values, y_train.values, **fit_kw)
-        return accuracy_score(y_val.values, model.predict(X_val.values))
+        return f1_score(y_val.values, model.predict(X_val.values), average="macro")
 
     xgb_study = optuna.create_study(direction="maximize", sampler=sampler)
     xgb_study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=True)
@@ -75,7 +75,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         "reg_alpha": xgb_study.best_trial.params["alpha"],
         "reg_lambda": xgb_study.best_trial.params["lambda"],
     }
-    print(f"  [Optuna] Best XGBoost val accuracy: {xgb_study.best_value:.4f}")
+    print(f"  [Optuna] Best XGBoost val macro-F1: {xgb_study.best_value:.4f}")
 
     # ── LightGBM study (9 dimensions, num_leaves constrained by max_depth) ──
     print("\n  [Optuna] Tuning LightGBM...")
@@ -102,7 +102,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         if sample_weight is not None:
             fit_kw["sample_weight"] = sample_weight
         model.fit(X_train.values, y_train.values, **fit_kw)
-        return accuracy_score(y_val.values, model.predict(X_val.values))
+        return f1_score(y_val.values, model.predict(X_val.values), average="macro")
 
     lgbm_study = optuna.create_study(direction="maximize", sampler=sampler)
     lgbm_study.optimize(lgbm_objective, n_trials=n_trials, show_progress_bar=True)
@@ -118,7 +118,7 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         "reg_alpha": lgbm_study.best_trial.params["alpha"],
         "reg_lambda": lgbm_study.best_trial.params["lambda"],
     }
-    print(f"  [Optuna] Best LightGBM val accuracy: {lgbm_study.best_value:.4f}")
+    print(f"  [Optuna] Best LightGBM val macro-F1: {lgbm_study.best_value:.4f}")
 
     # ── Final ensemble eval with best params ──
     print("\n  [Optuna] Evaluating best ensemble...")
@@ -145,9 +145,9 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
     proba_xgb = xgb_model.predict_proba(X_val.values)
     proba_lgbm = lgbm_model.predict_proba(X_val.values)
     pred = ((proba_xgb + proba_lgbm) / 2).argmax(axis=1)
-    ensemble_acc = accuracy_score(y_val.values, pred)
+    ensemble_f1 = f1_score(y_val.values, pred, average="macro")
 
-    print(f"\n  Best ensemble val accuracy: {ensemble_acc:.4f}")
+    print(f"\n  Best ensemble val macro-F1: {ensemble_f1:.4f}")
     print(f"  XGBoost params: {xgb_best}")
     print(f"  LightGBM params: {lgbm_best}")
 
@@ -232,7 +232,7 @@ def train_ensemble(X_train, y_train, X_val=None, y_val=None,
 # ──────────────────────────────────────────────────────────────
 
 def evaluate(xgb_model, lgbm_model, X_test, y_test, regime_classes, tag=""):
-    """Evaluate ensemble — prints accuracy, classification report, confusion matrix."""
+    """Evaluate ensemble — prints accuracy, macro-F1, classification report, confusion matrix."""
     proba_xgb = xgb_model.predict_proba(X_test.values)
     proba_lgbm = lgbm_model.predict_proba(X_test.values)
     proba_ensemble = (proba_xgb + proba_lgbm) / 2
@@ -241,10 +241,12 @@ def evaluate(xgb_model, lgbm_model, X_test, y_test, regime_classes, tag=""):
     acc_xgb = accuracy_score(y_test, xgb_model.predict(X_test.values))
     acc_lgbm = accuracy_score(y_test, lgbm_model.predict(X_test.values))
     acc_ens = accuracy_score(y_test, pred_ensemble)
+    f1_ens = f1_score(y_test, pred_ensemble, average="macro")
 
     print(f"\n  {tag}XGBoost accuracy:  {acc_xgb:.4f}")
     print(f"  {tag}LightGBM accuracy: {acc_lgbm:.4f}")
     print(f"  {tag}Ensemble accuracy: {acc_ens:.4f}")
+    print(f"  {tag}Ensemble macro-F1: {f1_ens:.4f}")
 
     present_labels = sorted(y_test.unique())
     present_names = [regime_classes[i] for i in present_labels]
