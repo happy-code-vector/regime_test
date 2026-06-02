@@ -17,7 +17,9 @@ from pathlib import Path
 
 SCRIPTS = [
     ("train_5m", "5m baseline"),
-    ("train_5m_features", "5m + engineered features"),
+    ("train_5m_smooth", "5m smoothing only"),
+    ("train_5m_3class_raw", "5m 3-class only"),
+    ("train_5m_3class", "5m 3-class + smoothing"),
 ]
 
 LOG_DIR = Path("logs")
