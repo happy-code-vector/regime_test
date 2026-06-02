@@ -105,7 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--csv", default="training_15m.csv")
     parser.add_argument("--output", default="trained_output_15m_smooth_only")
     parser.add_argument("--mode", choices=["static", "optuna", "both"], default="static")
-    parser.add_argument("--trials", type=int, default=50)
+    parser.add_argument("--trials", type=int, default=100)
     parser.add_argument("--smooth-window", type=int, default=3)
     args = parser.parse_args()
     main(args.csv, args.output, args.mode, args.trials, args.smooth_window)

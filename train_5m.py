@@ -148,6 +148,6 @@ if __name__ == "__main__":
     parser.add_argument("--csv", default="training_5m.csv")
     parser.add_argument("--output", default="trained_output_5m")
     parser.add_argument("--mode", choices=["static", "optuna", "both"], default="static")
-    parser.add_argument("--trials", type=int, default=50, help="Optuna trial count")
+    parser.add_argument("--trials", type=int, default=100, help="Optuna trial count")
     args = parser.parse_args()
     main(args.csv, args.output, args.mode, args.trials)
