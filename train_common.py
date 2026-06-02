@@ -11,6 +11,7 @@ Provides:
 
 import time
 import json
+import os
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -29,42 +30,91 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
                      sample_weight=None, n_trials=100):
     """Run Optuna to find best XGBoost + LightGBM hyperparameters.
 
+    Both studies run in parallel (XGBoost and LightGBM train simultaneously).
     Uses separate studies per model (8D + 9D instead of 17D joint),
     multivariate TPE sampler, and early stopping on both models.
     Returns (best_xgb_params, best_lgbm_params) dicts.
     """
     import optuna
+    from concurrent.futures import ThreadPoolExecutor
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    sampler = optuna.samplers.TPESampler(multivariate=True, seed=42)
 
-    # ── XGBoost study (8 dimensions) ──
-    print("\n  [Optuna] Tuning XGBoost...")
-    def xgb_objective(trial):
-        params = {
-            "objective": "multi:softprob",
-            "num_class": num_class,
-            "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
-            "max_depth": trial.suggest_int("max_depth", 4, 10),
-            "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
-            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
-            "min_child_weight": trial.suggest_int("min_child", 2, 10),
-            "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
-            "eval_metric": "mlogloss",
-            "early_stopping_rounds": 25,
-            "verbosity": 0,
-            "n_jobs": -1,
-        }
-        model = xgb.XGBClassifier(**params)
-        fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
-        if sample_weight is not None:
-            fit_kw["sample_weight"] = sample_weight
-        model.fit(X_train.values, y_train.values, **fit_kw)
-        return f1_score(y_val.values, model.predict(X_val.values), average="macro")
+    # Split CPU cores between the two parallel studies
+    total_cores = os.cpu_count() or 4
+    half_cores = max(1, total_cores // 2)
 
-    xgb_study = optuna.create_study(direction="maximize", sampler=sampler)
-    xgb_study.optimize(xgb_objective, n_trials=n_trials, show_progress_bar=True)
+    def run_xgb_study():
+        sampler = optuna.samplers.TPESampler(multivariate=True, seed=42)
+        def objective(trial):
+            params = {
+                "objective": "multi:softprob",
+                "num_class": num_class,
+                "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
+                "max_depth": trial.suggest_int("max_depth", 4, 10),
+                "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
+                "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
+                "min_child_weight": trial.suggest_int("min_child", 2, 10),
+                "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
+                "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
+                "eval_metric": "mlogloss",
+                "early_stopping_rounds": 25,
+                "verbosity": 0,
+                "n_jobs": half_cores,
+            }
+            model = xgb.XGBClassifier(**params)
+            fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
+            if sample_weight is not None:
+                fit_kw["sample_weight"] = sample_weight
+            model.fit(X_train.values, y_train.values, **fit_kw)
+            return f1_score(y_val.values, model.predict(X_val.values), average="macro")
+
+        study = optuna.create_study(direction="maximize", sampler=sampler)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        return study
+
+    def run_lgbm_study():
+        sampler = optuna.samplers.TPESampler(multivariate=True, seed=42)
+        def objective(trial):
+            max_depth = trial.suggest_int("max_depth", 4, 12)
+            max_leaves = max(31, min(255, 2 ** max_depth))
+            params = {
+                "objective": "multiclass",
+                "num_class": num_class,
+                "metric": "multi_logloss",
+                "boosting_type": "gbdt",
+                "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
+                "max_depth": max_depth,
+                "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
+                "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
+                "num_leaves": trial.suggest_int("num_leaves", 31, max_leaves),
+                "min_child_samples": trial.suggest_int("min_child", 10, 100),
+                "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 0.5),
+                "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
+                "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
+                "verbose": -1,
+                "n_jobs": half_cores,
+            }
+            model = lgbm.LGBMClassifier(**params)
+            fit_kw = {"eval_set": [(X_val.values, y_val.values)],
+                      "callbacks": [lgbm.early_stopping(25, verbose=False)]}
+            if sample_weight is not None:
+                fit_kw["sample_weight"] = sample_weight
+            model.fit(X_train.values, y_train.values, **fit_kw)
+            return f1_score(y_val.values, model.predict(X_val.values), average="macro")
+
+        study = optuna.create_study(direction="maximize", sampler=sampler)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        return study
+
+    print(f"\n  [Optuna] Tuning XGBoost + LightGBM in parallel ({total_cores} cores, {half_cores} per model)...")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        xgb_future = pool.submit(run_xgb_study)
+        lgbm_future = pool.submit(run_lgbm_study)
+        xgb_study = xgb_future.result()
+        lgbm_study = lgbm_future.result()
 
     xgb_best = {
         "n_estimators": xgb_study.best_trial.params["n_estimators"],
@@ -77,40 +127,6 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
         "reg_lambda": xgb_study.best_trial.params["lambda"],
     }
     print(f"  [Optuna] Best XGBoost val macro-F1: {xgb_study.best_value:.4f}")
-
-    # ── LightGBM study (9 dimensions, num_leaves constrained by max_depth) ──
-    print("\n  [Optuna] Tuning LightGBM...")
-    def lgbm_objective(trial):
-        max_depth = trial.suggest_int("max_depth", 4, 12)
-        max_leaves = max(31, min(255, 2 ** max_depth))  # num_leaves can't exceed 2^max_depth
-        params = {
-            "objective": "multiclass",
-            "num_class": num_class,
-            "metric": "multi_logloss",
-            "boosting_type": "gbdt",
-            "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
-            "max_depth": max_depth,
-            "learning_rate": trial.suggest_float("lr", 0.01, 0.15, log=True),
-            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample", 0.5, 1.0),
-            "num_leaves": trial.suggest_int("num_leaves", 31, max_leaves),
-            "min_child_samples": trial.suggest_int("min_child", 10, 100),
-            "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 0.5),
-            "reg_alpha": trial.suggest_float("alpha", 1e-4, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("lambda", 1e-4, 10.0, log=True),
-            "verbose": -1,
-            "n_jobs": -1,
-        }
-        model = lgbm.LGBMClassifier(**params)
-        fit_kw = {"eval_set": [(X_val.values, y_val.values)],
-                  "callbacks": [lgbm.early_stopping(25, verbose=False)]}
-        if sample_weight is not None:
-            fit_kw["sample_weight"] = sample_weight
-        model.fit(X_train.values, y_train.values, **fit_kw)
-        return f1_score(y_val.values, model.predict(X_val.values), average="macro")
-
-    lgbm_study = optuna.create_study(direction="maximize", sampler=sampler)
-    lgbm_study.optimize(lgbm_objective, n_trials=n_trials, show_progress_bar=True)
 
     lgbm_best = {
         "n_estimators": lgbm_study.best_trial.params["n_estimators"],
@@ -128,25 +144,11 @@ def run_optuna_study(X_train, y_train, X_val, y_val, num_class,
 
     # ── Final ensemble eval with best params ──
     print("\n  [Optuna] Evaluating best ensemble...")
-    xgb_model = xgb.XGBClassifier(
-        objective="multi:softprob", num_class=num_class,
-        eval_metric="mlogloss", early_stopping_rounds=25, verbosity=0,
-        **xgb_best,
+    xgb_model, lgbm_model = train_ensemble(
+        X_train, y_train, X_val, y_val,
+        num_class=num_class, xgb_params=xgb_best, lgbm_params=lgbm_best,
+        sample_weight=sample_weight,
     )
-    fit_kw = {"eval_set": [(X_val.values, y_val.values)], "verbose": False}
-    if sample_weight is not None:
-        fit_kw["sample_weight"] = sample_weight
-    xgb_model.fit(X_train.values, y_train.values, **fit_kw)
-
-    lgbm_model = lgbm.LGBMClassifier(
-        objective="multiclass", num_class=num_class, verbose=-1,
-        **lgbm_best,
-    )
-    lgbm_kw = {"eval_set": [(X_val.values, y_val.values)],
-               "callbacks": [lgbm.early_stopping(25, verbose=False)]}
-    if sample_weight is not None:
-        lgbm_kw["sample_weight"] = sample_weight
-    lgbm_model.fit(X_train.values, y_train.values, **lgbm_kw)
 
     proba_xgb = xgb_model.predict_proba(X_val.values)
     proba_lgbm = lgbm_model.predict_proba(X_val.values)
@@ -184,51 +186,65 @@ STATIC_LGBM_PARAMS = {
 def train_ensemble(X_train, y_train, X_val=None, y_val=None,
                    num_class=5, xgb_params=None, lgbm_params=None,
                    sample_weight=None):
-    """Train XGBoost + LightGBM ensemble.
+    """Train XGBoost + LightGBM ensemble in parallel.
 
     If xgb_params/lgbm_params are None, uses static defaults.
     Pass sample_weight for weighted training.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     xgb_p = xgb_params or STATIC_XGB_PARAMS
     lgbm_p = lgbm_params or STATIC_LGBM_PARAMS
 
-    print(f"\n  Training XGBoost on {len(X_train)} samples, {X_train.shape[1]} features")
+    total_cores = os.cpu_count() or 4
+    half_cores = max(1, total_cores // 2)
+
+    def train_xgb():
+        model = xgb.XGBClassifier(
+            objective="multi:softprob",
+            num_class=num_class,
+            eval_metric="mlogloss",
+            early_stopping_rounds=25 if X_val is not None else None,
+            verbosity=0,
+            n_jobs=half_cores,
+            **xgb_p,
+        )
+        fit_kw = {}
+        if X_val is not None:
+            fit_kw["eval_set"] = [(X_val.values, y_val.values)]
+            fit_kw["verbose"] = False
+        if sample_weight is not None:
+            fit_kw["sample_weight"] = sample_weight
+        model.fit(X_train.values, y_train.values, **fit_kw)
+        return model
+
+    def train_lgbm():
+        model = lgbm.LGBMClassifier(
+            objective="multiclass",
+            num_class=num_class,
+            verbose=-1,
+            n_jobs=half_cores,
+            **lgbm_p,
+        )
+        fit_kw = {}
+        if X_val is not None:
+            fit_kw["eval_set"] = [(X_val.values, y_val.values)]
+            fit_kw["callbacks"] = [lgbm.early_stopping(25, verbose=False)]
+        if sample_weight is not None:
+            fit_kw["sample_weight"] = sample_weight
+        model.fit(X_train.values, y_train.values, **fit_kw)
+        return model
+
+    print(f"\n  Training XGBoost + LightGBM in parallel ({total_cores} cores, {half_cores} per model)...")
     start = time.time()
 
-    xgb_model = xgb.XGBClassifier(
-        objective="multi:softprob",
-        num_class=num_class,
-        eval_metric="mlogloss",
-        early_stopping_rounds=25 if X_val is not None else None,
-        verbosity=0,
-        **xgb_p,
-    )
-    fit_kw = {}
-    if X_val is not None:
-        fit_kw["eval_set"] = [(X_val.values, y_val.values)]
-        fit_kw["verbose"] = False
-    if sample_weight is not None:
-        fit_kw["sample_weight"] = sample_weight
-    xgb_model.fit(X_train.values, y_train.values, **fit_kw)
-    print(f"  XGBoost trained in {time.time() - start:.1f}s")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        xgb_future = pool.submit(train_xgb)
+        lgbm_future = pool.submit(train_lgbm)
+        xgb_model = xgb_future.result()
+        lgbm_model = lgbm_future.result()
 
-    print(f"  Training LightGBM on {len(X_train)} samples")
-    start = time.time()
-
-    lgbm_model = lgbm.LGBMClassifier(
-        objective="multiclass",
-        num_class=num_class,
-        verbose=-1,
-        **lgbm_p,
-    )
-    lgbm_kw = {}
-    if X_val is not None:
-        lgbm_kw["eval_set"] = [(X_val.values, y_val.values)]
-        lgbm_kw["callbacks"] = [lgbm.early_stopping(25, verbose=False)]
-    if sample_weight is not None:
-        lgbm_kw["sample_weight"] = sample_weight
-    lgbm_model.fit(X_train.values, y_train.values, **lgbm_kw)
-    print(f"  LightGBM trained in {time.time() - start:.1f}s")
+    print(f"  Both models trained in {time.time() - start:.1f}s")
 
     return xgb_model, lgbm_model
 
