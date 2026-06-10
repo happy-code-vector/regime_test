@@ -317,6 +317,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", default="hmm_regime_labels.csv")
-    parser.add_argument("--output", default="trained_output")
+    parser.add_argument("--output", default="output/trained_output")
     args = parser.parse_args()
     main(args.csv, args.output)

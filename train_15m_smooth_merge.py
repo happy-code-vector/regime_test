@@ -111,7 +111,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="15m training — smooth + merge")
     parser.add_argument("--csv", default="training_15m.csv")
-    parser.add_argument("--output", default="trained_output_15m_smooth_merge")
+    parser.add_argument("--output", default="output/trained_output_15m_smooth_merge")
     parser.add_argument("--mode", choices=["static", "optuna", "both"], default="static")
     parser.add_argument("--trials", type=int, default=100)
     parser.add_argument("--smooth-window", type=int, default=7)

@@ -145,7 +145,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Train 5m regime classifier")
     parser.add_argument("--csv", default="training_5m.csv")
-    parser.add_argument("--output", default="trained_output_5m")
+    parser.add_argument("--output", default="output/trained_output_5m")
     parser.add_argument("--mode", choices=["static", "optuna", "both"], default="static")
     parser.add_argument("--trials", type=int, default=100, help="Optuna trial count")
     args = parser.parse_args()
