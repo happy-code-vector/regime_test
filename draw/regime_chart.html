@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Regime Chart - OHLCV with Regime Labels</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a2e;
+        }
+        #controls {
+            padding: 15px 20px;
+            background: #16213e;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            border-bottom: 1px solid #0f3460;
+        }
+        #controls label {
+            color: #e8e8e8;
+            font-size: 14px;
+        }
+        #controls select {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #0f3460;
+            background: #1a1a2e;
+            color: #e8e8e8;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        #controls select:hover {
+            border-color: #533483;
+        }
+        #chart-container {
+            width: 100%;
+            height: calc(100vh - 60px);
+        }
+        .regime-legend {
+            display: flex;
+            gap: 15px;
+            margin-left: auto;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+        .legend-text {
+            color: #a0a0a0;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label for="fileSelect">Select Data File:</label>
+        <select id="fileSelect">
+            <option value="regime_15m.csv">15 Minute</option>
+            <option value="regime_1h.csv">1 Hour</option>
+        </select>
+        <div class="regime-legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: #00d9ff;"></div>
+                <span class="legend-text">STRONG_UP</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #22d222;"></div>
+                <span class="legend-text">UP</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ffcc00;"></div>
+                <span class="legend-text">RANGE</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #ff4444;"></div>
+                <span class="legend-text">DOWN</span>
+            </div>
+        </div>
+    </div>
+    <div id="chart-container"></div>
+
+    <script>
+        // Regime colors mapping
+        const regimeColors = {
+            'STRONG_UP': '#00d9ff',
+            'UP': '#22d222',
+            'RANGE': '#ffcc00',
+            'DOWN': '#ff4444'
+        };
+
+        // Parse CSV data
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
+            const data = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                const row = {};
+                headers.forEach((header, index) => {
+                    row[header] = values[index]?.trim();
+                });
+                data.push(row);
+            }
+            return data;
+        }
+
+        // Convert date string to timestamp
+        function parseTimestamp(dateStr) {
+            return new Date(dateStr).getTime() / 1000;
+        }
+
+        // Load CSV file
+        async function loadCSV(filename) {
+            const response = await fetch(filename);
+            if (!response.ok) {
+                throw new Error(`Failed to load ${filename}`);
+            }
+            return await response.text();
+        }
+
+        // Create chart
+        function createChart() {
+            const container = document.getElementById('chart-container');
+            const chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                layout: {
+                    background: { type: 'solid', color: '#1a1a2e' },
+                    textColor: '#d1d4dc',
+                },
+                grid: {
+                    vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                    horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: 'rgba(197, 203, 216, 0.3)',
+                },
+                timeScale: {
+                    borderColor: 'rgba(197, 203, 216, 0.3)',
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                chart.applyOptions({
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                });
+            });
+
+            return chart;
+        }
+
+        // Add candlestick series
+        function addCandlestickSeries(chart) {
+            return chart.addCandlestickSeries({
+                upColor: '#22d222',
+                downColor: '#ff4444',
+                borderDownColor: '#ff4444',
+                borderUpColor: '#22d222',
+                wickDownColor: '#ff4444',
+                wickUpColor: '#22d222',
+            });
+        }
+
+        // Process OHLCV data for chart
+        function processOHLCV(data) {
+            return data.map(row => ({
+                time: parseTimestamp(row.time),
+                open: parseFloat(row.open),
+                high: parseFloat(row.high),
+                low: parseFloat(row.low),
+                close: parseFloat(row.close),
+            }));
+        }
+
+        // Add regime labels (only when regime changes)
+        function addRegimeLabels(chart, data) {
+            const labels = [];
+            let lastRegime = null;
+            let lastRegimeId = null;
+
+            data.forEach((row, index) => {
+                const currentRegime = row.regime;
+                const currentRegimeId = row.regime_id;
+
+                // Only add label when regime changes
+                if (currentRegime !== lastRegime || currentRegimeId !== lastRegimeId) {
+                    // Get the next regime (look ahead to find next regime change)
+                    let nextRegime = null;
+                    for (let i = index + 1; i < data.length; i++) {
+                        if (data[i].regime !== currentRegime || data[i].regime_id !== currentRegimeId) {
+                            nextRegime = data[i].regime;
+                            break;
+                        }
+                    }
+
+                    // Show next regime (or current regime if no next regime exists)
+                    const labelRegime = nextRegime || currentRegime;
+                    labels.push({
+                        time: parseTimestamp(row.time),
+                        position: 'aboveBar',
+                        text: labelRegime,
+                        color: regimeColors[labelRegime] || '#ffffff',
+                        backgroundColor: 'rgba(26, 26, 46, 0.8)',
+                        shape: 'circle',
+                        size: 1,
+                    });
+                    lastRegime = currentRegime;
+                    lastRegimeId = currentRegimeId;
+                }
+            });
+
+            // Create a line series for markers (needed for labels)
+            const markerSeries = chart.addLineSeries({
+                color: 'transparent',
+                lineWidth: 0,
+                priceLineVisible: false,
+                lastPriceVisible: false,
+            });
+
+            // Add empty data points for markers
+            const markerData = data.map(row => ({
+                time: parseTimestamp(row.time),
+                value: parseFloat(row.high),
+            }));
+
+            markerSeries.setData(markerData);
+
+            // Set markers
+            markerSeries.setMarkers(labels);
+        }
+
+        // Initialize and load data
+        async function initChart(filename = 'regime_15m.csv') {
+            try {
+                const chart = createChart();
+                const candlestickSeries = addCandlestickSeries(chart);
+
+                const csvText = await loadCSV(filename);
+                const data = parseCSV(csvText);
+
+                const ohlcvData = processOHLCV(data);
+                candlestickSeries.setData(ohlcvData);
+
+                addRegimeLabels(chart, data);
+
+                // Fit content
+                chart.timeScale().fitContent();
+
+            } catch (error) {
+                console.error('Error loading chart:', error);
+                document.getElementById('chart-container').innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #ff4444;">
+                        <div style="text-align: center;">
+                            <p style="font-size: 18px; margin-bottom: 10px;">Failed to load data</p>
+                            <p style="font-size: 14px; opacity: 0.7;">Please run a local server to access CSV files</p>
+                            <p style="font-size: 14px; opacity: 0.7;">Try: python -m http.server 8000</p>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // File selection handler
+        document.getElementById('fileSelect').addEventListener('change', (e) => {
+            const container = document.getElementById('chart-container');
+            container.innerHTML = ''; // Clear previous chart
+            initChart(e.target.value);
+        });
+
+        // Initialize on load
+        initChart();
+    </script>
+</body>
+</html>
