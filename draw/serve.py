@@ -24,12 +24,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        url = f'http://localhost:{PORT}/regime_chart.html'
-        print(f"🚀 Server started at {url}")
+        regime_url = f'http://localhost:{PORT}/regime_chart.html'
+        close_url = f'http://localhost:{PORT}/close_chart.html'
+        print(f"🚀 Server started at {regime_url}")
+        print(f"   Also available: {close_url}")
         print("Press Ctrl+C to stop the server")
 
         # Open browser automatically
-        webbrowser.open(url)
+        webbrowser.open(regime_url)
 
         try:
             httpd.serve_forever()
